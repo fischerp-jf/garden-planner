@@ -1,0 +1,231 @@
+// Garden Planner — Phase 2 schema.
+// See /Users/patrickfischer/.claude/plans/garden-lifecycle-app-happy-cherny.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Top-level: a garden is the container. One ZIP => one USDA zone. `userId`
+// is nullable so multi-user can be bolted on later without per-table churn.
+// ---------------------------------------------------------------------------
+model Garden {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  zipCode   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  zones          Zone[]
+  plantings      Planting[]
+  photos         Photo[]
+  journalEntries JournalEntry[]
+  conversations  Conversation[]
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Zone shape is stored as a JSON string (SQLite has no native Json). Content
+// today: {"kind":"rect","x":0..1,"y":0..1,"width":0..1,"height":0..1}.
+// Tomorrow (Postgres): change type to Json, drop the string parsing.
+// ---------------------------------------------------------------------------
+model Zone {
+  id               String   @id @default(cuid())
+  gardenId         String
+  name             String?
+  orientation      String
+  shape            String
+  referencePhotoId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  garden         Garden             @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  referencePhoto Photo?             @relation("ZoneReferencePhoto", fields: [referencePhotoId], references: [id], onDelete: SetNull)
+  plantings      Planting[]
+  photos         Photo[]            @relation("ZonePhotos")
+  journalEntries JournalEntry[]
+  conversations  ConversationZone[]
+
+  @@index([gardenId])
+}
+
+// ---------------------------------------------------------------------------
+// A planted instance. Name is `Planting` to avoid colliding with the Plant
+// catalog type in /lib/types.ts (which stays file-based).
+// catalogId references PLANTS[i].id in /lib/plants.ts; validated at the API
+// layer via a zod enum generated from the catalog.
+// ---------------------------------------------------------------------------
+model Planting {
+  id        String    @id @default(cuid())
+  gardenId  String
+  zoneId    String?
+  catalogId String
+  nickname  String?
+  status    String
+  plantedAt DateTime?
+  removedAt DateTime?
+  positionX Float?
+  positionY Float?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  garden         Garden                 @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  zone           Zone?                  @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  annotations    PhotoAnnotation[]
+  journalEntries JournalEntry[]
+  conversations  ConversationPlanting[]
+
+  @@index([gardenId])
+  @@index([zoneId])
+  @@index([catalogId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// A photo has at most one spatial context (the zone it depicts). Plants
+// shown in the photo are modeled as PhotoAnnotation rows — explicit N:M.
+// `url` is an opaque storage handle (see /lib/storage.ts), never a raw path.
+// ---------------------------------------------------------------------------
+model Photo {
+  id        String   @id @default(cuid())
+  gardenId  String
+  zoneId    String?
+  url       String
+  filename  String
+  mimeType  String
+  width     Int?
+  height    Int?
+  takenAt   DateTime
+  caption   String?
+  createdAt DateTime @default(now())
+
+  garden            Garden            @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  zone              Zone?             @relation("ZonePhotos", fields: [zoneId], references: [id], onDelete: SetNull)
+  zonesReferencedBy Zone[]            @relation("ZoneReferencePhoto")
+  annotations       PhotoAnnotation[]
+  journalEntries    JournalEntry[]    @relation("JournalPhoto")
+
+  @@index([gardenId])
+  @@index([zoneId])
+  @@index([takenAt])
+}
+
+// ---------------------------------------------------------------------------
+// `plantingId` is nullable so users can annotate a photo before the
+// corresponding Planting exists ("I plan to put tomatoes here"). `source`,
+// `confidence`, `modelVersion` are present on day one so a CV-assisted
+// identification flow can be added later without a migration.
+// ---------------------------------------------------------------------------
+model PhotoAnnotation {
+  id           String   @id @default(cuid())
+  photoId      String
+  plantingId   String?
+  kind         String
+  x            Float
+  y            Float
+  width        Float?
+  height       Float?
+  label        String?
+  source       String   @default("manual")
+  confidence   Float?
+  modelVersion String?
+  createdAt    DateTime @default(now())
+
+  photo    Photo     @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  planting Planting? @relation(fields: [plantingId], references: [id], onDelete: SetNull)
+
+  @@index([photoId])
+  @@index([plantingId])
+}
+
+// ---------------------------------------------------------------------------
+// Journal entries anchor to a planting, a zone, both, or just the garden
+// (all FKs nullable except gardenId). One table keeps the timeline query
+// simple. Tags are in a join table from day one — indexable filters now,
+// zero migration later.
+// ---------------------------------------------------------------------------
+model JournalEntry {
+  id              String   @id @default(cuid())
+  gardenId        String
+  plantingId      String?
+  zoneId          String?
+  photoId         String?
+  entryDate       DateTime
+  note            String
+  harvestQuantity Float?
+  harvestUnit     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  garden   Garden            @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  planting Planting?         @relation(fields: [plantingId], references: [id], onDelete: SetNull)
+  zone     Zone?             @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  photo    Photo?            @relation("JournalPhoto", fields: [photoId], references: [id], onDelete: SetNull)
+  tags     JournalEntryTag[]
+
+  @@index([gardenId, entryDate])
+  @@index([plantingId])
+  @@index([zoneId])
+}
+
+model JournalEntryTag {
+  entryId String
+  tag     String
+  entry   JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tag])
+  @@index([tag])
+}
+
+// ---------------------------------------------------------------------------
+// Only user-approved summaries are persisted — raw transcripts never are.
+// A Conversation row is created only when the user reaches summarization;
+// `status` is "pending_summary" while in the inbox or "approved" once saved.
+// Discarding = delete the row.
+// ---------------------------------------------------------------------------
+model Conversation {
+  id         String    @id @default(cuid())
+  gardenId   String
+  title      String?
+  summary    String
+  status     String
+  startedAt  DateTime
+  endedAt    DateTime?
+  approvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  garden    Garden                 @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  plantings ConversationPlanting[]
+  zones     ConversationZone[]
+
+  @@index([gardenId, status])
+}
+
+model ConversationPlanting {
+  conversationId String
+  plantingId     String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  planting       Planting     @relation(fields: [plantingId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, plantingId])
+  @@index([plantingId])
+}
+
+model ConversationZone {
+  conversationId String
+  zoneId         String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  zone           Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, zoneId])
+  @@index([zoneId])
+}

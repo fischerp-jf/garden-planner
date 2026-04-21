@@ -254,3 +254,50 @@ export const PLANTS: Plant[] = [
     }
   }
 ];
+
+// Const tuple mirror of PLANTS ids. Consumed by zod `z.enum(CATALOG_IDS)` at
+// API boundaries and by `CatalogId` for compile-time narrowing. A runtime
+// invariant below catches drift between PLANTS and this list.
+export const CATALOG_IDS = [
+  "tomato",
+  "basil",
+  "kale",
+  "bean",
+  "squash",
+  "comfrey",
+  "yarrow",
+  "marigold",
+  "nasturtium",
+  "garlic",
+  "chive",
+  "calendula",
+] as const;
+
+export type CatalogId = (typeof CATALOG_IDS)[number];
+
+export function isCatalogId(value: string): value is CatalogId {
+  return (CATALOG_IDS as readonly string[]).includes(value);
+}
+
+// Fail fast at import time if the two lists diverge — the only way to notice
+// an out-of-sync edit without this is a runtime 500 from a mis-validated
+// request in production.
+if (process.env.NODE_ENV !== "production") {
+  const fromPlants = new Set(PLANTS.map((p) => p.id));
+  const fromIds = new Set<string>(CATALOG_IDS);
+  for (const id of fromPlants) {
+    if (!fromIds.has(id)) {
+      throw new Error(
+        `plants.ts: PLANTS contains "${id}" but CATALOG_IDS does not. Update CATALOG_IDS.`,
+      );
+    }
+  }
+  for (const id of fromIds) {
+    if (!fromPlants.has(id)) {
+      throw new Error(
+        `plants.ts: CATALOG_IDS contains "${id}" but PLANTS does not. Update CATALOG_IDS.`,
+      );
+    }
+  }
+}
+

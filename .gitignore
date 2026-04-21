@@ -3,3 +3,13 @@ node_modules
 .DS_Store
 .gh-config/
 .tools/
+v2 prompt.rtf
+v2 prompt.txt
+
+/generated/prisma
+.env
+.env.local
+prisma/dev.db
+prisma/dev.db-journal
+prisma/migrations/dev.db
+uploads/
