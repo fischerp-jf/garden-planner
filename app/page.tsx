@@ -11,7 +11,8 @@ import {
   Season,
   ZoneRect
 } from "@/lib/types";
-import { ChangeEvent, DragEvent, PointerEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useGarden } from "@/components/GardenProvider";
 
 const CATEGORY_OPTIONS: Array<{ value: PlantCategory; label: string }> = [
   { value: "vegetable", label: "Vegetables" },
@@ -95,12 +96,20 @@ function monthOptions(): number[] {
 }
 
 export default function HomePage() {
+  const { garden } = useGarden();
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [zones, setZones] = useState<ZoneRect[]>([]);
   const [draftZone, setDraftZone] = useState<ZoneRect | null>(null);
   const [orientation, setOrientation] = useState<Orientation>("N");
   const [zipCode, setZipCode] = useState("");
   const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Pre-fill ZIP from persisted garden when it loads.
+  useEffect(() => {
+    if (garden?.zipCode) setZipCode(garden.zipCode);
+  }, [garden?.zipCode]);
   const [categories, setCategories] = useState<PlantCategory[]>(["vegetable", "herb", "flower"]);
   const [plan, setPlan] = useState<RecommendationResponse | null>(null);
   const [visualPlacements, setVisualPlacements] = useState<VisualPlacement[]>([]);
@@ -245,6 +254,32 @@ export default function HomePage() {
     setZones((current) => [...current, newZone]);
   }
 
+  async function saveToGarden(): Promise<void> {
+    if (!plan || !garden) return;
+    setSaving(true);
+
+    // Persist ZIP if it changed.
+    if (zipCode && zipCode !== garden.zipCode) {
+      await fetch(`/api/gardens/${garden.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zipCode }),
+      });
+    }
+
+    // Save top recommendations as planned plantings.
+    for (const rec of plan.recommendations.slice(0, 6)) {
+      await fetch(`/api/gardens/${garden.id}/plantings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ catalogId: rec.plant.id, status: "planned" }),
+      });
+    }
+
+    setSaving(false);
+    setSaved(true);
+  }
+
   async function generatePlan(): Promise<void> {
     if (zones.length === 0) {
       setError("Add at least one planting zone by dragging over the photo.");
@@ -281,6 +316,7 @@ export default function HomePage() {
 
       const result = payload as RecommendationResponse;
       setPlan(result);
+      setSaved(false);
       setVisualPlacements(
         result.placements.map((placement, index) => ({
           ...placement,
@@ -534,6 +570,30 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {plan && garden && (
+        <div className="save-banner">
+          {saved ? (
+            <>
+              <span>Top 6 plants saved as planned plantings.</span>
+              <a href="/plantings" style={{ color: "var(--brand)", fontWeight: 700 }}>View Plants →</a>
+            </>
+          ) : (
+            <>
+              <span>Ready to save this layout to your garden?</span>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => { void saveToGarden(); }}
+                disabled={saving}
+                style={{ fontSize: "0.84rem" }}
+              >
+                {saving ? "Saving…" : "Save top 6 to garden"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {plan ? (
         <section className="results-grid">
