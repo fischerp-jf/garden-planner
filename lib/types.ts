@@ -2,6 +2,8 @@ export type Orientation = "N" | "S" | "E" | "W";
 
 export type SunExposure = "full_sun" | "part_sun" | "shade";
 
+export type ShadeLevel = "fully_shaded" | "morning_shade" | "afternoon_shade";
+
 export type PlantCategory =
   | "vegetable"
   | "flower"
@@ -42,6 +44,7 @@ export interface ZoneRect {
   y: number;
   width: number;
   height: number;
+  shadeLevel?: ShadeLevel;
 }
 
 export interface RecommendationRequest {
