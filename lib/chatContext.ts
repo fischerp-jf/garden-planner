@@ -28,6 +28,19 @@ function catalogName(id: string): string {
   return PLANTS.find((p) => p.id === id)?.name ?? id;
 }
 
+function shadeDescription(level: string | null | undefined): string | null {
+  switch (level) {
+    case "fully_shaded":
+      return "fully shaded";
+    case "morning_shade":
+      return "morning shade";
+    case "afternoon_shade":
+      return "afternoon shade";
+    default:
+      return null;
+  }
+}
+
 export async function buildChatContext(input: ChatContextInput): Promise<ChatContext | null> {
   const { db, gardenId, focus } = input;
   const today = input.today ?? new Date();
@@ -56,10 +69,11 @@ export async function buildChatContext(input: ChatContextInput): Promise<ChatCon
     where: { gardenId },
     include: { _count: { select: { plantings: true } } },
   });
-  const zoneLines = zones.map(
-    (z) =>
-      `- ${z.name ?? "(unnamed)"} — ${z.orientation}-facing, ${z._count.plantings} plantings`,
-  );
+  const zoneLines = zones.map((z) => {
+    const shade = shadeDescription(z.shadeLevel);
+    const shadePart = shade ? `, ${shade}` : "";
+    return `- ${z.name ?? "(unnamed)"} — ${z.orientation}-facing${shadePart}, ${z._count.plantings} plantings`;
+  });
 
   const sections: string[] = [];
   sections.push(
@@ -99,7 +113,11 @@ export async function buildChatContext(input: ChatContextInput): Promise<ChatCon
           (planting.plantedAt ? `- Planted: ${planting.plantedAt.toISOString().slice(0, 10)}\n` : "") +
           (planting.removedAt ? `- Removed: ${planting.removedAt.toISOString().slice(0, 10)}\n` : "") +
           (planting.zone
-            ? `- Zone: ${planting.zone.name ?? "(unnamed)"} (${planting.zone.orientation}-facing)\n`
+            ? (() => {
+                const shade = shadeDescription(planting.zone.shadeLevel);
+                const shadeSuffix = shade ? `, ${shade}` : "";
+                return `- Zone: ${planting.zone.name ?? "(unnamed)"} (${planting.zone.orientation}-facing${shadeSuffix})\n`;
+              })()
             : "") +
           (planting.notes ? `- Notes: ${planting.notes}\n` : "") +
           (journalLines.length
@@ -127,9 +145,12 @@ export async function buildChatContext(input: ChatContextInput): Promise<ChatCon
         return `- ${e.entryDate.toISOString().slice(0, 10)} [${tags}] ${e.note.slice(0, 200)}`;
       });
 
+      const zoneShade = shadeDescription(zone.shadeLevel);
+
       sections.push(
         `## Focus: Zone "${zone.name ?? "(unnamed)"}"\n` +
           `- Orientation: ${zone.orientation}\n` +
+          (zoneShade ? `- Shade: ${zoneShade}\n` : "") +
           (plantingLines.length ? `- Plantings:\n${plantingLines.join("\n")}\n` : "") +
           (journalLines.length ? `- Recent journal:\n${journalLines.join("\n")}\n` : ""),
       );

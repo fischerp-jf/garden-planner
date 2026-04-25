@@ -57,6 +57,13 @@ function seasonalSunAdjustment(month: number): number {
 }
 
 export function sunExposureForZone(zone: ZoneRect, orientation: Orientation, month: number): SunExposure {
+  // User-provided shade overrides any geometry-based estimate. "fully_shaded"
+  // is unambiguous; partial-shade variants cap the score at part_sun so we
+  // don't claim a tree-shaded bed gets full sun even when geometry suggests it.
+  if (zone.shadeLevel === "fully_shaded") {
+    return "shade";
+  }
+
   const cx = zone.x + zone.width / 2;
   const cy = zone.y + zone.height / 2;
 
@@ -72,6 +79,10 @@ export function sunExposureForZone(zone: ZoneRect, orientation: Orientation, mon
 
   const edgeShadePenalty = clamp((0.12 - zone.x) + (0.12 - zone.y), -0.08, 0.08);
   const rawScore = clamp(southFacingBias + seasonalSunAdjustment(month) - edgeShadePenalty, 0, 1);
+
+  if (zone.shadeLevel === "morning_shade" || zone.shadeLevel === "afternoon_shade") {
+    return categorizeSun(Math.min(rawScore, 0.55));
+  }
 
   return categorizeSun(rawScore);
 }

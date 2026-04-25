@@ -7,6 +7,9 @@ const normalizedCoord = z.number().min(0).max(1);
 
 const Orientation = z.enum(["N", "S", "E", "W"]);
 
+const ShadeLevel = z.enum(["fully_shaded", "morning_shade", "afternoon_shade"]);
+export type ShadeLevelValue = z.infer<typeof ShadeLevel>;
+
 const PlantingStatus = z.enum([
   "planned",
   "planted",
@@ -73,6 +76,7 @@ export const ZoneCreate = z.object({
   name: z.string().max(200).optional(),
   orientation: Orientation,
   shape: ZoneShape,
+  shadeLevel: ShadeLevel.optional(),
   referencePhotoId: z.string().cuid().optional(),
 });
 
