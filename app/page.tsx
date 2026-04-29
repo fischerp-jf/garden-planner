@@ -119,11 +119,25 @@ export default function HomePage() {
 
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+  // useRef keeps a mutable value between renders, but changing it does NOT re-render.
+  // That makes it a good fit for a local counter used only for ID generation.
+  const placementIdRef = useRef(0);
 
-  const recommendationByPlantId = useMemo(() => {
-    const map = new Map<string, PlantRecommendation>();
+  function nextPlacementId(prefix: string, seed: string): string {
+    // Increment first so IDs begin at 1 and stay unique for this component instance.
+    placementIdRef.current += 1;
+    // Template literal syntax: `${...}` injects expression values into a string.
+    return `${prefix}-${seed}-${placementIdRef.current}`;
+  }
+
+  const plantById = useMemo(() => {
+    const map = new Map<string, Plant>();
     plan?.recommendations.forEach((recommendation) => {
-      map.set(recommendation.plant.id, recommendation);
+      // Multiple recommendations can reference the same plant across different zones.
+      // For placement rendering we only need the underlying plant record, so one plant
+      // entry per ID is the right shape and avoids treating zone-specific recommendations
+      // as if they were globally unique by plant ID.
+      map.set(recommendation.plant.id, recommendation.plant);
     });
     return map;
   }, [plan]);
@@ -320,7 +334,10 @@ export default function HomePage() {
       setVisualPlacements(
         result.placements.map((placement, index) => ({
           ...placement,
-          id: `placement-${index}-${placement.zoneId}-${placement.plantId}`
+          // `map((placement, index) => ({ ... }))` transforms each placement into a new object.
+          // `...placement` copies existing fields, then `id:` overrides/sets a stable UI key.
+          // Seed combines index/zone/plant for readability, while nextPlacementId adds uniqueness.
+          id: nextPlacementId("placement", `${index}-${placement.zoneId}-${placement.plantId}`)
         }))
       );
     } catch (caught) {
@@ -362,20 +379,23 @@ export default function HomePage() {
       return;
     }
 
-    const recommendation = recommendationByPlantId.get(draggedPlantId);
-    if (!recommendation) {
+    const plant = plantById.get(draggedPlantId);
+    if (!plant) {
       return;
     }
 
     setVisualPlacements((current) => [
+      // Functional updater form: `current` is the latest state value from React.
       ...current,
       {
-        id: `manual-${Date.now()}-${draggedPlantId}`,
+        // Avoid Date.now() collision risk (same ms): use counter-based ID instead.
+        // Result example: "manual-tomato-7".
+        id: nextPlacementId("manual", draggedPlantId),
         zoneId: "manual",
         plantId: draggedPlantId,
         x: point.x,
         y: point.y,
-        matureSpreadIn: recommendation.plant.matureSpreadIn,
+        matureSpreadIn: plant.matureSpreadIn,
         season: activeSeason,
         color: SEASON_COLORS[activeSeason]
       }
@@ -383,13 +403,13 @@ export default function HomePage() {
   }
 
   function circleSizePercent(placement: VisualPlacement): number {
-    const recommendation = recommendationByPlantId.get(placement.plantId);
-    if (!recommendation) {
+    const plant = plantById.get(placement.plantId);
+    if (!plant) {
       return 9;
     }
 
     const base = Math.min(20, Math.max(6, placement.matureSpreadIn / 2.7));
-    return base * growthFactor(month, recommendation.plant);
+    return base * growthFactor(month, plant);
   }
 
   return (
@@ -534,7 +554,7 @@ export default function HomePage() {
                 ) : null}
 
                 {visualPlacements.map((placement) => {
-                  const recommendation = recommendationByPlantId.get(placement.plantId);
+                  const plant = plantById.get(placement.plantId);
                   const size = circleSizePercent(placement);
 
                   return (
@@ -543,7 +563,7 @@ export default function HomePage() {
                       className="plant-circle"
                       draggable
                       onDragStart={(event) => event.dataTransfer.setData("placementId", placement.id)}
-                      title={recommendation?.plant.name ?? placement.plantId}
+                      title={plant?.name ?? placement.plantId}
                       style={{
                         left: `${placement.x * 100}%`,
                         top: `${placement.y * 100}%`,
@@ -553,7 +573,7 @@ export default function HomePage() {
                         backgroundColor: `${placement.color}55`
                       }}
                     >
-                      <span>{recommendation?.plant.name ?? placement.plantId}</span>
+                      <span>{plant?.name ?? placement.plantId}</span>
                     </div>
                   );
                 })}
@@ -613,8 +633,11 @@ export default function HomePage() {
           <article className="result-card wide">
             <h2>Recommended Plants (Top 10)</h2>
             <div className="recommend-grid">
-              {plan.recommendations.map((recommendation) => (
-                <div key={recommendation.plant.id} className="recommend-card">
+              {plan.recommendations.map((recommendation, index) => (
+                <div
+                  key={`${recommendation.plant.id}-${recommendation.recommendedZoneIds.join("-")}-${index}`}
+                  className="recommend-card"
+                >
                   <button
                     type="button"
                     className="drag-chip"
