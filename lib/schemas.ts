@@ -65,7 +65,9 @@ const dateLike = z.preprocess((v) => {
 
 export const GardenCreate = z.object({
   name: z.string().min(1).max(200),
-  zipCode: z.string().min(3).max(10),
+  // Empty string is allowed: the home page auto-creates a garden before the
+  // user has typed a ZIP, then PATCHes it once they fill the field in.
+  zipCode: z.string().max(10),
 });
 
 export const GardenPatch = GardenCreate.partial();

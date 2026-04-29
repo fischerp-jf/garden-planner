@@ -41,6 +41,13 @@ export function GardenProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "My Garden", zipCode: "" }),
       });
+      if (!createRes.ok) {
+        // Don't pretend a garden exists when the create failed; downstream
+        // features that require `garden` will short-circuit, and the error
+        // becomes visible instead of silently null-ing the context.
+        console.error("Auto-create garden failed", createRes.status, await createRes.text());
+        return;
+      }
       const { garden: created } = (await createRes.json()) as { garden: GardenSummary };
       setGarden(created);
     } finally {
