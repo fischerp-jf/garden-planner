@@ -563,6 +563,7 @@ export default function HomePage() {
                       className="plant-circle"
                       draggable
                       onDragStart={(event) => event.dataTransfer.setData("placementId", placement.id)}
+                      onPointerDown={(event) => event.stopPropagation()}
                       title={plant?.name ?? placement.plantId}
                       style={{
                         left: `${placement.x * 100}%`,
