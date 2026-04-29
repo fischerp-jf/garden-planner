@@ -98,6 +98,7 @@ function monthOptions(): number[] {
 export default function HomePage() {
   const { garden } = useGarden();
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [photoId, setPhotoId] = useState<string | null>(null);
   const [zones, setZones] = useState<ZoneRect[]>([]);
   const [draftZone, setDraftZone] = useState<ZoneRect | null>(null);
   const [orientation, setOrientation] = useState<Orientation>("N");
@@ -110,6 +111,32 @@ export default function HomePage() {
   useEffect(() => {
     if (garden?.zipCode) setZipCode(garden.zipCode);
   }, [garden?.zipCode]);
+
+  // Restore the most recent persisted photo for this garden, if any.
+  useEffect(() => {
+    if (!garden?.id) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/gardens/${garden.id}`);
+        if (!res.ok) return;
+        const payload = (await res.json()) as { garden: { photos: { id: string }[] } };
+        if (cancelled) return;
+        const latest = payload.garden.photos?.[0];
+        if (latest) {
+          setPhotoId(latest.id);
+          setPhotoUrl(`/api/photos/${latest.id}/file`);
+        }
+      } catch {
+        // Photo restore is best-effort; don't surface a failure here.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [garden?.id]);
   const [categories, setCategories] = useState<PlantCategory[]>(["vegetable", "herb", "flower"]);
   const [plan, setPlan] = useState<RecommendationResponse | null>(null);
   const [visualPlacements, setVisualPlacements] = useState<VisualPlacement[]>([]);
@@ -168,22 +195,55 @@ export default function HomePage() {
     };
   }
 
-  function onPhotoUpload(event: ChangeEvent<HTMLInputElement>): void {
+  async function onPhotoUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPhotoUrl(String(reader.result));
-      setZones([]);
-      setDraftZone(null);
-      setPlan(null);
-      setVisualPlacements([]);
-      setError(null);
-    };
-    reader.readAsDataURL(file);
+    // Step 1: instant local preview via FileReader. Awaiting prevents the
+    // upload swap (step 2) from being clobbered by a late-firing onload.
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+    setPhotoUrl(dataUrl);
+    setPhotoId(null);
+    setZones([]);
+    setDraftZone(null);
+    setPlan(null);
+    setVisualPlacements([]);
+    setError(null);
+
+    // Step 2: persist to the garden's photo store. New uploads become the
+    // latest photo (sorted by takenAt desc on read), so on next load they
+    // restore automatically. The previous photo row is left in the DB; a
+    // future cleanup pass can delete superseded rows.
+    if (!garden) return;
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("metadata", JSON.stringify({ takenAt: new Date().toISOString() }));
+
+      const res = await fetch(`/api/gardens/${garden.id}/photos`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        throw new Error(`Upload failed (${res.status})`);
+      }
+      const { photo } = (await res.json()) as { photo: { id: string } };
+
+      setPhotoId(photo.id);
+      setPhotoUrl(`/api/photos/${photo.id}/file`);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "unknown error";
+      setError(`Photo not saved (${message}). It will be lost on refresh.`);
+    }
   }
 
   function toggleCategory(category: PlantCategory): void {
@@ -429,7 +489,7 @@ export default function HomePage() {
             <h2>1. Upload and Mark Zones</h2>
             <label className="upload-input">
               <span>Garden Photo</span>
-              <input type="file" accept="image/*" onChange={onPhotoUpload} />
+              <input type="file" accept="image/*" onChange={(event) => { void onPhotoUpload(event); }} />
             </label>
             <p className="small-note">Drag on the photo to draw planting zones (beds, edges, or microclimates).</p>
             <button type="button" className="ghost-button" onClick={clearZones}>
