@@ -3,6 +3,8 @@ node_modules
 .DS_Store
 .gh-config/
 .tools/
+# Claude Code's per-machine approvals: "don't ask again" saves the exact command, secrets included.
+.claude/settings.local.json
 v2 prompt.rtf
 v2 prompt.txt
 
